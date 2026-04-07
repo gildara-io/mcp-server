@@ -5,7 +5,7 @@
   "display_name": "Gildara",
   "description": "Connect your AI tools to your Gildara prompt vault. List, resolve, run, and create structured prompts with operating contracts, auto-repair, and variable substitution.",
   "repository": {
-    "url": "https://github.com/gildara/mcp-server",
+    "url": "https://github.com/gildara-io/mcp-server",
     "source": "github"
   },
   "version_detail": {
