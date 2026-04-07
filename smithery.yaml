@@ -1,0 +1,29 @@
+# Smithery.ai MCP server configuration
+# https://smithery.ai/docs/publishing
+
+runtime: typescript
+
+# Smithery builds the TypeScript project directly
+build:
+  command: npm run build
+
+# Environment variables the user must configure
+env:
+  GILDARA_API_KEY:
+    description: "Your Gildara API key (pvk_...). Get one at https://gildara.io/account"
+    required: true
+  GILDARA_BASE_URL:
+    description: "Override API base URL (default: https://gildara.io)"
+    required: false
+
+# Server metadata
+metadata:
+  name: Gildara
+  description: "Connect your AI tools to your Gildara prompt vault. List, resolve, run, and create structured prompts with operating contracts."
+  author: Gildara
+  homepage: https://gildara.io
+  tags:
+    - prompts
+    - ai-agents
+    - operating-contracts
+    - prompt-management
