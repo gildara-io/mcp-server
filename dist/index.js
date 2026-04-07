@@ -1,0 +1,197 @@
+#!/usr/bin/env node
+/**
+ * Gildara MCP Server
+ *
+ * Exposes your Gildara prompt vault to any MCP-compatible AI tool
+ * (Claude Desktop, Cursor, Windsurf, etc.).
+ *
+ * Setup:
+ *   1. npm install -g @gildara/mcp-server
+ *   2. Add to your MCP config with your API key
+ *   3. Your AI can now list, resolve, run, and create prompts
+ *
+ * Environment:
+ *   GILDARA_API_KEY  — Your Gildara API key (pvk_...)
+ *   GILDARA_BASE_URL — Optional: override the API base URL (default: https://gildara.io)
+ */
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { z } from "zod";
+import { GildaraClient } from "./client.js";
+// ── Initialize ───────────────────────────────────────────────────
+const apiKey = process.env.GILDARA_API_KEY;
+if (!apiKey) {
+    console.error("Error: GILDARA_API_KEY environment variable is required.\n" +
+        "Get your API key at https://gildara.io/account\n" +
+        "Then set it in your MCP configuration.");
+    process.exit(1);
+}
+const client = new GildaraClient({
+    apiKey,
+    baseUrl: process.env.GILDARA_BASE_URL,
+});
+const server = new McpServer({
+    name: "gildara",
+    version: "0.1.0",
+});
+// ── Tools ────────────────────────────────────────────────────────
+server.tool("list_prompts", "List all prompts in your Gildara vault. Returns titles, IDs, categories, and whether each has an operating contract enabled.", {}, async () => {
+    try {
+        const prompts = await client.listPrompts();
+        const lines = prompts.map((p) => {
+            const contract = p.operatingContract?.enabled ? " ⚡contract" : "";
+            return `${p.promptId} — ${p.title} [${p.category}]${contract}`;
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: prompts.length > 0
+                        ? `Found ${prompts.length} prompts:\n\n${lines.join("\n")}`
+                        : "Your vault is empty. Create prompts at https://gildara.io or use the create_prompt tool.",
+                },
+            ],
+        };
+    }
+    catch (e) {
+        return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
+    }
+});
+server.tool("get_prompt", "Get details of a specific prompt including its content, variables, tags, and operating contract configuration.", { promptId: z.string().describe("The prompt ID to retrieve") }, async ({ promptId }) => {
+    try {
+        const prompt = await client.getPrompt(promptId);
+        const details = [
+            `**${prompt.title}**`,
+            `ID: ${prompt.promptId}`,
+            `Category: ${prompt.category}`,
+            `Description: ${prompt.description || "(none)"}`,
+            `Variables: ${prompt.variables.length > 0 ? prompt.variables.join(", ") : "none"}`,
+            `Tags: ${prompt.tags.length > 0 ? prompt.tags.join(", ") : "none"}`,
+            `Contract: ${prompt.operatingContract?.enabled ? "enabled" : "disabled"}`,
+        ];
+        if (prompt.operatingContract?.enabled) {
+            details.push(`  Role: ${prompt.operatingContract.roleMission || "(not set)"}`);
+            details.push(`  Tools: ${prompt.operatingContract.allowedTools?.join(", ") || "none"}`);
+            details.push(`  Output: ${prompt.operatingContract.outputContract?.format || "text"}`);
+        }
+        details.push(`Updated: ${prompt.updatedAt}`);
+        return { content: [{ type: "text", text: details.join("\n") }] };
+    }
+    catch (e) {
+        return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
+    }
+});
+server.tool("resolve_prompt", "Resolve a prompt into its compiled system prompt, with operating contract sections assembled (role, tools, stop conditions, output schema). This is what you should pass as the system prompt to an AI model. Supports variable substitution and channel selection (latest/stable).", {
+    promptId: z.string().describe("The prompt ID to resolve"),
+    channel: z.string().optional().describe("Version channel: 'latest' (default) or 'stable'"),
+    variables: z.string().optional().describe("JSON object of variables to substitute, e.g. '{\"code_diff\": \"...\", \"author\": \"Alice\"}'"),
+}, async ({ promptId, channel, variables }) => {
+    try {
+        const parsedVars = variables ? JSON.parse(variables) : undefined;
+        const resolvedChannel = (channel === "stable" ? "stable" : "latest");
+        const resolved = await client.resolvePrompt(promptId, { channel: resolvedChannel, variables: parsedVars });
+        const header = [
+            `**${resolved.title}** (${resolved.channel} channel, version ${resolved.version})`,
+        ];
+        if (resolved.outputContract?.enabled) {
+            header.push(`Output contract: ${resolved.outputContract.format}${resolved.outputContract.jsonSchema ? " (schema provided)" : ""}`);
+        }
+        header.push("", "---", "");
+        return {
+            content: [{ type: "text", text: header.join("\n") + resolved.compiled }],
+        };
+    }
+    catch (e) {
+        return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
+    }
+});
+server.tool("run_prompt", "Run a prompt through AI with automatic output validation and auto-repair. If the prompt has an output contract (JSON schema), the response is validated and automatically retried with a repair prompt on failure. Returns the AI response, parsed JSON (if applicable), and validation metadata.", {
+    promptId: z.string().describe("The prompt ID to run"),
+    variables: z.string().optional().describe("JSON object of variables, e.g. '{\"key\": \"value\"}'"),
+    model: z.string().optional().describe("Model to use (default: gemini-flash-latest)"),
+}, async ({ promptId, variables, model }) => {
+    try {
+        const parsedVars = variables ? JSON.parse(variables) : undefined;
+        const result = await client.runPrompt(promptId, { variables: parsedVars, model });
+        const meta = [
+            `Run ID: ${result.runId}`,
+            `Tokens: ${result.tokensIn} in / ${result.tokensOut} out`,
+            `Latency: ${result.latencyMs}ms`,
+        ];
+        if (result.validation) {
+            meta.push(`Validation: ${result.validation.valid ? "✓ valid" : "✗ invalid"}`);
+            meta.push(`Attempts: ${result.validation.attempts}`);
+            if (result.validation.repaired)
+                meta.push("(auto-repaired)");
+            if (result.validation.errors.length > 0) {
+                meta.push(`Errors: ${result.validation.errors.join("; ")}`);
+            }
+        }
+        const parts = [
+            { type: "text", text: meta.join("\n") + "\n\n---\n\n" + result.response },
+        ];
+        if (result.parsed) {
+            parts.push({
+                type: "text",
+                text: "\n\nParsed output:\n```json\n" + JSON.stringify(result.parsed, null, 2) + "\n```",
+            });
+        }
+        return { content: parts };
+    }
+    catch (e) {
+        return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
+    }
+});
+server.tool("create_prompt", "Create a new prompt in your Gildara vault. Returns the new prompt ID which you can then use with resolve_prompt or run_prompt.", {
+    title: z.string().describe("Prompt title"),
+    content: z.string().describe("The prompt content (supports {{variables}})"),
+    description: z.string().optional().describe("Brief description of what this prompt does"),
+    category: z.string().optional().describe("Category (e.g. Engineering, Legal, Ops)"),
+}, async ({ title, content, description, category }) => {
+    try {
+        const result = await client.createPrompt({ title, content, description, category });
+        return {
+            content: [{
+                    type: "text",
+                    text: `Prompt created!\n\nID: ${result.promptId}\nTitle: ${title}\n\nUse resolve_prompt or run_prompt with this ID.`,
+                }],
+        };
+    }
+    catch (e) {
+        return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
+    }
+});
+server.tool("list_blueprints", "List all available agent blueprint templates. These are pre-built operating contracts for common agent types (code review, legal analysis, triage, etc.) that you can browse and use as starting points.", {}, async () => {
+    // Blueprints are static — we embed them rather than fetching from API
+    const blueprints = [
+        { name: "Code Review Agent", desc: "Security-biased PR review with JSON findings report" },
+        { name: "Inbox Triage Agent", desc: "Classify and route messages with priority scoring" },
+        { name: "Research & Synthesis Agent", desc: "Cross-reference sources with evidence labeling" },
+        { name: "Legal Document Analyzer", desc: "Contract risk analysis from a specified party's perspective" },
+        { name: "Data Pipeline Monitor", desc: "Diagnose pipeline failures with root-cause reports" },
+        { name: "Security Audit Agent", desc: "OWASP/CWE-mapped vulnerability findings" },
+        { name: "Customer Support Escalation", desc: "Ticket triage with draft responses for human review" },
+        { name: "Product Feedback Classifier", desc: "Sentiment analysis and theme extraction" },
+        { name: "CI/CD Failure Diagnostician", desc: "Root-cause analysis for build/test/deploy failures" },
+        { name: "Competitive Intelligence", desc: "Public-source competitor analysis with evidence levels" },
+        { name: "Content Moderation Agent", desc: "Policy-based content classification and routing" },
+        { name: "Multi-Agent Task Decomposer", desc: "Break complex tasks into agent-assignable sub-tasks" },
+    ];
+    const lines = blueprints.map((b) => `• **${b.name}** — ${b.desc}`);
+    return {
+        content: [{
+                type: "text",
+                text: `${blueprints.length} Agent Blueprints available:\n\n${lines.join("\n")}\n\nBrowse and use these at https://gildara.io → Templates → Agent Blueprints`,
+            }],
+    };
+});
+// ── Start ────────────────────────────────────────────────────────
+async function main() {
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+}
+main().catch((error) => {
+    console.error("Failed to start Gildara MCP server:", error);
+    process.exit(1);
+});
+//# sourceMappingURL=index.js.map
