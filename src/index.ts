@@ -42,7 +42,7 @@ const client = new GildaraClient({
 
 const server = new McpServer({
   name: "gildara",
-  version: "0.2.1",
+  version: "0.3.0",
 });
 
 // ── Tools ────────────────────────────────────────────────────────
