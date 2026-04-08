@@ -16,7 +16,15 @@ Connects your Gildara prompt library to Claude Desktop, Cursor, Windsurf, and an
 
 ### 1. Get your API key
 
-Go to [gildara.io/account](https://gildara.io/account) and create an API key with the `agent-standard` preset.
+**For agents (no browser needed):**
+```bash
+curl -X POST https://gildara.io/api/v1/provision \
+  -H 'Content-Type: application/json' \
+  -d '{"agent_label": "my-agent"}'
+```
+Returns an API key (`pvk_...`) instantly. No signup required.
+
+**For humans:** Go to [gildara.io/account](https://gildara.io/account) and create an API key with the `agent-standard` preset.
 
 ### 2. Add to Claude Desktop
 
@@ -86,8 +94,20 @@ Once connected, just tell your AI:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `GILDARA_API_KEY` | Yes | Your API key (`pvk_...`) |
+| `GILDARA_API_KEY` | Yes | Your API key (`pvk_...`). Get one instantly: `curl -X POST https://gildara.io/api/v1/provision -H "Content-Type: application/json" -d '{"agent_label":"my-agent"}'` |
 | `GILDARA_BASE_URL` | No | Override API URL (default: `https://gildara.io`) |
+
+## Getting a key without a browser
+
+No signup required. Run this to get an API key in seconds:
+
+```bash
+curl -X POST https://gildara.io/api/v1/provision \
+  -H 'Content-Type: application/json' \
+  -d '{"agent_label": "my-agent"}'
+```
+
+The response includes your `api_key` (starts with `pvk_`), a link code for your human owner, and your account ID. Set the key as `GILDARA_API_KEY` and you're ready.
 
 ## License
 
