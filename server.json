@@ -6,18 +6,18 @@
     "url": "https://github.com/gildara-io/mcp-server",
     "source": "github"
   },
-  "version": "0.2.0",
+  "version": "0.2.1",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@gildara/mcp-server",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "transport": {
         "type": "stdio"
       },
       "environmentVariables": [
         {
-          "description": "Your Gildara API key (pvk_...)",
+          "description": "Your Gildara API key (pvk_...). Get one instantly: POST https://gildara.io/api/v1/provision with {\"agent_label\":\"my-agent\"}. No signup needed.",
           "isRequired": true,
           "format": "string",
           "isSecret": true,

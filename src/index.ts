@@ -26,9 +26,11 @@ import { GildaraClient } from "./client.js";
 const apiKey = process.env.GILDARA_API_KEY;
 if (!apiKey) {
   console.error(
-    "Error: GILDARA_API_KEY environment variable is required.\n" +
-    "Get your API key at https://gildara.io/account\n" +
-    "Then set it in your MCP configuration.",
+    "Error: GILDARA_API_KEY environment variable is required.\n\n" +
+    "Get a key instantly (no signup needed):\n" +
+    '  curl -X POST https://gildara.io/api/v1/provision -H "Content-Type: application/json" -d \'{"agent_label":"my-agent"}\'\n\n' +
+    "Or get one at https://gildara.io/account if you already have an account.\n" +
+    "Then set GILDARA_API_KEY in your MCP configuration.",
   );
   process.exit(1);
 }
@@ -40,7 +42,7 @@ const client = new GildaraClient({
 
 const server = new McpServer({
   name: "gildara",
-  version: "0.2.0",
+  version: "0.2.1",
 });
 
 // ── Tools ────────────────────────────────────────────────────────
@@ -62,7 +64,7 @@ server.tool(
             type: "text" as const,
             text: prompts.length > 0
               ? `Found ${prompts.length} prompts:\n\n${lines.join("\n")}`
-              : "Your vault is empty. Create prompts at https://gildara.io or use the create_prompt tool.",
+              : "Your vault is empty. Use the create_prompt tool to add prompts, or browse templates with list_blueprints.",
           },
         ],
       };
@@ -197,42 +199,48 @@ server.tool(
 
 server.tool(
   "list_blueprints",
-  "List all available agent blueprint templates. These are pre-built operating contracts for common agent types (code review, legal analysis, triage, etc.) that you can browse and use as starting points.",
-  {},
-  async () => {
-    // Blueprints are static — we embed them rather than fetching from API
-    const blueprints = [
-      // Domain-specific
-      { name: "Senior Engineer Code Review", desc: "Security-biased review focusing on vulnerabilities and scalability" },
-      { name: "IP Risk Analysis", desc: "Structured IP risk assessment for software assets" },
-      { name: "Contract Redline Checklist", desc: "Red flag checklist for indemnity, termination, liability" },
-      { name: "Bug Triage & Priority Score", desc: "Severity/priority scoring for bug reports" },
-      { name: "Requirements to User Stories", desc: "INVEST-compliant user story generation" },
-      { name: "Product Spec Critique", desc: "Find holes in specs before implementation" },
-      { name: "Incident Postmortem Draft", desc: "Blame-free postmortem with timeline and 5 Whys" },
-      { name: "Competitive Teardown", desc: "Gap analysis against competitor releases" },
-      { name: "Prompt Critic / Linter", desc: "Analyze and improve prompt clarity and reliability" },
-      // Operator & launch
-      { name: "Failure Mode Audit", desc: "Race conditions, retry storms, partial writes, silent failures" },
-      { name: "Prelaunch Security Review", desc: "OWASP-style risks, tenant isolation, billing abuse" },
-      { name: "Activation Funnel Diagnosis", desc: "Shortest path to first value, onboarding redesign" },
-      { name: "Pricing Architecture Review", desc: "Pricing model, paywalls, expansion levers" },
-      { name: "Support Ticket Predictor", desc: "Predict top 25 support issues before launch" },
-      // High-demand agent use cases
-      { name: "Code to Documentation", desc: "Generate README, API docs, architecture notes from code" },
-      { name: "Refactor Planner", desc: "Safe, incremental refactoring plan with rollback steps" },
-      { name: "Data Model Review", desc: "Schema review for scalability, query performance, integrity" },
-      { name: "API Design Review", desc: "REST/GraphQL consistency, security, developer experience" },
-      { name: "Email Sequence Writer", desc: "Multi-email onboarding, nurture, re-engagement sequences" },
-      { name: "Landing Page Copywriter", desc: "Conversion-optimized hero, value props, CTAs" },
-    ];
-    const lines = blueprints.map((b) => `• **${b.name}** — ${b.desc}`);
-    return {
-      content: [{
-        type: "text" as const,
-        text: `${blueprints.length} Agent Blueprints available:\n\n${lines.join("\n")}\n\nBrowse and use these at https://gildara.io → Templates → Agent Blueprints`,
-      }],
-    };
+  "List all available agent blueprint templates. These are pre-built operating contracts for common agent types (code review, legal analysis, triage, etc.) that you can browse and use as starting points. Supports search by keyword or category.",
+  {
+    query: z.string().optional().describe("Search keyword to filter blueprints"),
+    category: z.string().optional().describe("Filter by category (e.g. Engineering, Research, Security)"),
+  },
+  async ({ query, category }) => {
+    try {
+      // Fetch live from API — always up to date, no hardcoding
+      const params = new URLSearchParams();
+      if (query) params.set("q", query);
+      if (category) params.set("category", category);
+      const baseUrl = (process.env.GILDARA_BASE_URL || "https://gildara.io").replace(/\/$/, "");
+      const url = `${baseUrl}/api/v1/blueprints${params.toString() ? "?" + params.toString() : ""}`;
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`API returned ${resp.status}`);
+      const json = await resp.json();
+      const items = json.data?.items || [];
+      if (items.length === 0) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: query || category
+              ? `No blueprints found matching ${query ? `"${query}"` : ""} ${category ? `in category "${category}"` : ""}. Try a different search or browse all with list_blueprints (no arguments).`
+              : "No blueprints available.",
+          }],
+        };
+      }
+      const lines = items.map((b: any) =>
+        `• **${b.name}** [${b.category}] — ${b.description}${b.variables.length > 0 ? ` (vars: ${b.variables.join(", ")})` : ""}`
+      );
+      const cats = json.data?.filters?.categories || [];
+      return {
+        content: [{
+          type: "text" as const,
+          text: `${items.length} blueprints${query ? ` matching "${query}"` : ""}${category ? ` in ${category}` : ""}:\n\n${lines.join("\n")}\n\n` +
+            `Categories: ${cats.join(", ")}\n\n` +
+            `Use get_prompt on a blueprint ID to see full content, or create_prompt to save one to your vault.`,
+        }],
+      };
+    } catch (e: any) {
+      return { content: [{ type: "text" as const, text: `Error fetching blueprints: ${e.message}` }], isError: true };
+    }
   },
 );
 
