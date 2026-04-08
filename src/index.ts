@@ -40,7 +40,7 @@ const client = new GildaraClient({
 
 const server = new McpServer({
   name: "gildara",
-  version: "0.1.0",
+  version: "0.2.0",
 });
 
 // ── Tools ────────────────────────────────────────────────────────
@@ -202,18 +202,29 @@ server.tool(
   async () => {
     // Blueprints are static — we embed them rather than fetching from API
     const blueprints = [
-      { name: "Code Review Agent", desc: "Security-biased PR review with JSON findings report" },
-      { name: "Inbox Triage Agent", desc: "Classify and route messages with priority scoring" },
-      { name: "Research & Synthesis Agent", desc: "Cross-reference sources with evidence labeling" },
-      { name: "Legal Document Analyzer", desc: "Contract risk analysis from a specified party's perspective" },
-      { name: "Data Pipeline Monitor", desc: "Diagnose pipeline failures with root-cause reports" },
-      { name: "Security Audit Agent", desc: "OWASP/CWE-mapped vulnerability findings" },
-      { name: "Customer Support Escalation", desc: "Ticket triage with draft responses for human review" },
-      { name: "Product Feedback Classifier", desc: "Sentiment analysis and theme extraction" },
-      { name: "CI/CD Failure Diagnostician", desc: "Root-cause analysis for build/test/deploy failures" },
-      { name: "Competitive Intelligence", desc: "Public-source competitor analysis with evidence levels" },
-      { name: "Content Moderation Agent", desc: "Policy-based content classification and routing" },
-      { name: "Multi-Agent Task Decomposer", desc: "Break complex tasks into agent-assignable sub-tasks" },
+      // Domain-specific
+      { name: "Senior Engineer Code Review", desc: "Security-biased review focusing on vulnerabilities and scalability" },
+      { name: "IP Risk Analysis", desc: "Structured IP risk assessment for software assets" },
+      { name: "Contract Redline Checklist", desc: "Red flag checklist for indemnity, termination, liability" },
+      { name: "Bug Triage & Priority Score", desc: "Severity/priority scoring for bug reports" },
+      { name: "Requirements to User Stories", desc: "INVEST-compliant user story generation" },
+      { name: "Product Spec Critique", desc: "Find holes in specs before implementation" },
+      { name: "Incident Postmortem Draft", desc: "Blame-free postmortem with timeline and 5 Whys" },
+      { name: "Competitive Teardown", desc: "Gap analysis against competitor releases" },
+      { name: "Prompt Critic / Linter", desc: "Analyze and improve prompt clarity and reliability" },
+      // Operator & launch
+      { name: "Failure Mode Audit", desc: "Race conditions, retry storms, partial writes, silent failures" },
+      { name: "Prelaunch Security Review", desc: "OWASP-style risks, tenant isolation, billing abuse" },
+      { name: "Activation Funnel Diagnosis", desc: "Shortest path to first value, onboarding redesign" },
+      { name: "Pricing Architecture Review", desc: "Pricing model, paywalls, expansion levers" },
+      { name: "Support Ticket Predictor", desc: "Predict top 25 support issues before launch" },
+      // High-demand agent use cases
+      { name: "Code to Documentation", desc: "Generate README, API docs, architecture notes from code" },
+      { name: "Refactor Planner", desc: "Safe, incremental refactoring plan with rollback steps" },
+      { name: "Data Model Review", desc: "Schema review for scalability, query performance, integrity" },
+      { name: "API Design Review", desc: "REST/GraphQL consistency, security, developer experience" },
+      { name: "Email Sequence Writer", desc: "Multi-email onboarding, nurture, re-engagement sequences" },
+      { name: "Landing Page Copywriter", desc: "Conversion-optimized hero, value props, CTAs" },
     ];
     const lines = blueprints.map((b) => `• **${b.name}** — ${b.desc}`);
     return {
