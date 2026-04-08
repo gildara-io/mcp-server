@@ -1,6 +1,7 @@
 {
   "name": "@gildara/mcp-server",
-  "version": "0.1.0",
+  "version": "0.1.1",
+  "mcpName": "io.gildara/mcp-server",
   "description": "MCP server for Gildara — bring your prompt vault into any AI tool",
   "license": "MIT",
   "type": "module",

@@ -1,83 +1,36 @@
 {
-  "$schema": "https://registry.modelcontextprotocol.io/schemas/server.json",
-  "namespace": "io.gildara",
-  "name": "mcp-server",
-  "display_name": "Gildara",
-  "description": "Connect your AI tools to your Gildara prompt vault. List, resolve, run, and create structured prompts with operating contracts, auto-repair, and variable substitution.",
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.gildara/mcp-server",
+  "description": "Connect AI tools to your Gildara prompt vault with operating contracts and auto-repair.",
   "repository": {
     "url": "https://github.com/gildara-io/mcp-server",
     "source": "github"
   },
-  "version_detail": {
-    "version": "0.1.0",
-    "release_date": "2026-04-07",
-    "is_latest": true
-  },
+  "version": "0.1.1",
   "packages": [
     {
-      "registry_name": "npm",
-      "name": "@gildara/mcp-server",
-      "version": "0.1.0",
-      "runtime": "node",
-      "runtime_arguments": [
-        "--yes",
-        "@gildara/mcp-server"
-      ],
-      "environment_variables": [
+      "registryType": "npm",
+      "identifier": "@gildara/mcp-server",
+      "version": "0.1.1",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
         {
-          "name": "GILDARA_API_KEY",
-          "description": "Your Gildara API key (pvk_...). Get one at https://gildara.io/account or via POST /api/v1/provision.",
-          "required": true
+          "description": "Your Gildara API key (pvk_...)",
+          "isRequired": true,
+          "format": "string",
+          "isSecret": true,
+          "name": "GILDARA_API_KEY"
         },
         {
-          "name": "GILDARA_BASE_URL",
-          "description": "Override the API base URL. Default: https://gildara.io",
-          "required": false
+          "description": "Override API base URL (default: https://gildara.io)",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false,
+          "name": "GILDARA_BASE_URL"
         }
       ]
     }
-  ],
-  "tools": [
-    {
-      "name": "list_prompts",
-      "description": "List all prompts in your vault with titles, IDs, categories, and contract status."
-    },
-    {
-      "name": "get_prompt",
-      "description": "Get prompt details including content, variables, tags, and operating contract config."
-    },
-    {
-      "name": "resolve_prompt",
-      "description": "Compile a prompt with operating contract sections assembled. Supports variable substitution and channel selection."
-    },
-    {
-      "name": "run_prompt",
-      "description": "Run a prompt through AI with automatic JSON schema validation and auto-repair on failure."
-    },
-    {
-      "name": "create_prompt",
-      "description": "Create a new prompt in your vault."
-    },
-    {
-      "name": "list_blueprints",
-      "description": "Browse 12 pre-built agent blueprint templates for common workflows."
-    }
-  ],
-  "categories": [
-    "developer-tools",
-    "productivity",
-    "ai-agents"
-  ],
-  "tags": [
-    "prompts",
-    "ai-agents",
-    "operating-contracts",
-    "prompt-management",
-    "multi-agent"
-  ],
-  "links": {
-    "homepage": "https://gildara.io",
-    "documentation": "https://gildara.io/api/v1/discover",
-    "api_reference": "https://gildara.io/api-license"
-  }
+  ]
 }
