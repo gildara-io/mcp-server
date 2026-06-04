@@ -1,38 +1,74 @@
 #!/usr/bin/env node
 
 /**
- * Gildara MCP Server
+ * Gildara MCP Server (stdio transport)
  *
  * Exposes your Gildara prompt vault to any MCP-compatible AI tool
- * (Claude Desktop, Cursor, Windsurf, etc.).
+ * (Claude Desktop, Cursor, Windsurf, Claude Code CLI, etc.).
+ *
+ * ⚠️  PARITY REQUIRED with the HTTP MCP server at
+ *     app/api/mcp/[transport]/route.ts (which Claude.ai connects to).
+ *     If you add, remove, or change a tool here, do the same there in the
+ *     same PR. Different tool sets = users silently lose features on one
+ *     surface. See docs/MCP_INTEGRATION_CONTRACT.md for the checklist.
  *
  * Setup:
- *   1. npm install -g @gildara/mcp-server
- *   2. Add to your MCP config with your API key
- *   3. Your AI can now list, resolve, run, and create prompts
+ *   1. Add to your MCP config (no manual API key required — the server
+ *      auto-provisions an agent account on first run and caches the key
+ *      at ~/.gildara/auto-key.json).
+ *   2. Optionally set GILDARA_API_KEY to use an existing key instead.
+ *   3. Your AI can now list, search, resolve, run, create, and memory-
+ *      append prompts.
  *
  * Environment:
- *   GILDARA_API_KEY  — Your Gildara API key (pvk_...)
- *   GILDARA_BASE_URL — Optional: override the API base URL (default: https://gildara.io)
+ *   GILDARA_API_KEY  — Optional: existing Gildara API key (pvk_...).
+ *                      If unset, the server auto-provisions on first run.
+ *   GILDARA_BASE_URL — Optional: override the API base URL
+ *                      (default: https://gildara.io)
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { GildaraClient } from "./client.js";
+import { loadOrProvisionKey, AUTO_KEY_FILE } from "./autoProvision.js";
 
 // ── Initialize ───────────────────────────────────────────────────
 
-const apiKey = process.env.GILDARA_API_KEY;
-if (!apiKey) {
+const baseUrl = (process.env.GILDARA_BASE_URL || "https://gildara.io").replace(/\/$/, "");
+
+let keyRecord;
+try {
+  keyRecord = await loadOrProvisionKey(baseUrl);
+} catch (err: any) {
   console.error(
-    "Error: GILDARA_API_KEY environment variable is required.\n\n" +
-    "Get a key instantly (no signup needed):\n" +
-    '  curl -X POST https://gildara.io/api/v1/provision -H "Content-Type: application/json" -d \'{"agent_label":"my-agent"}\'\n\n' +
-    "Or get one at https://gildara.io/account if you already have an account.\n" +
-    "Then set GILDARA_API_KEY in your MCP configuration.",
+    "Error: could not obtain a Gildara API key.\n\n" +
+    `Reason: ${err?.message || err}\n\n` +
+    "Fallback: provision a key manually and set GILDARA_API_KEY in your MCP config:\n" +
+    `  curl -X POST ${baseUrl}/api/v1/provision -H "Content-Type: application/json" -d '{"agent_label":"my-agent"}'\n` +
+    "Or get one at https://gildara.io/account if you already have an account.",
   );
   process.exit(1);
+}
+
+const apiKey = keyRecord.apiKey;
+
+// Surface first-run provisioning prominently so the user can pair the
+// agent to their human account. Goes to stderr — stdout is the MCP
+// protocol stream and must stay clean.
+if (keyRecord.source === "provisioned") {
+  console.error(
+    `[Gildara] Auto-provisioned a new agent account on first run.\n` +
+    `  API key saved to: ${AUTO_KEY_FILE}\n` +
+    `  Key prefix: ${apiKey.slice(0, 8)}...\n` +
+    (keyRecord.linkCode
+      ? `  Link code: ${keyRecord.linkCode}\n` +
+        `  Pair this agent with your account at: ${baseUrl.replace(/\/api\/?$/, "")}/link?code=${keyRecord.linkCode}\n`
+      : "") +
+    `  Tier: free (10 prompts, 20 API calls/day). Upgrade: ${baseUrl}/pricing`,
+  );
+} else if (keyRecord.source === "file") {
+  console.error(`[Gildara] Using cached auto-provisioned key from ${AUTO_KEY_FILE}`);
 }
 
 const client = new GildaraClient({
@@ -42,14 +78,14 @@ const client = new GildaraClient({
 
 const server = new McpServer({
   name: "gildara",
-  version: "0.3.0",
+  version: "0.7.2",
 });
 
 // ── Tools ────────────────────────────────────────────────────────
 
 server.tool(
   "list_prompts",
-  "List all prompts in your Gildara vault. Returns titles, IDs, categories, and whether each has an operating contract enabled.",
+  "List all prompts in your Gildara vault. Returns titles, IDs, categories, and whether each has an operating contract enabled. Use search_prompts instead when you want to find prompts by topic or concept rather than listing everything.",
   {},
   async () => {
     try {
@@ -70,6 +106,41 @@ server.tool(
       };
     } catch (e: any) {
       return { content: [{ type: "text" as const, text: `Error: ${e.message}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  "search_prompts",
+  "Search your Gildara vault semantically by meaning, not just keywords. Returns the most relevant prompts for a natural-language query (e.g. 'reviewing code for security issues', 'summarizing customer feedback'). Ranked by vector similarity over title, description, category, tags, and content. Use this first before list_prompts when looking for a prompt that matches a concept.",
+  {
+    query: z.string().describe("Natural-language search query describing what you're looking for"),
+    limit: z.number().int().min(1).max(50).optional().describe("Max results to return (default 10)"),
+  },
+  async ({ query, limit }) => {
+    try {
+      const results = await client.searchPrompts(query, limit || 10);
+      if (results.length === 0) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: `No prompts found matching "${query}". Your vault may be empty, or the new prompts may still be indexing (embeddings generate asynchronously after creation). Try list_prompts to see all prompts.`,
+          }],
+        };
+      }
+      const lines = results.map((p, i) => {
+        const score = typeof p.distance === "number" ? ` (distance ${p.distance.toFixed(3)})` : "";
+        const contract = p.operatingContract?.enabled ? " ⚡contract" : "";
+        return `${i + 1}. ${p.promptId} — ${p.title} [${p.category}]${contract}${score}`;
+      });
+      return {
+        content: [{
+          type: "text" as const,
+          text: `Top ${results.length} prompts matching "${query}":\n\n${lines.join("\n")}\n\nUse get_prompt <id> or resolve_prompt <id> to fetch details.`,
+        }],
+      };
+    } catch (e: any) {
+      return { content: [{ type: "text" as const, text: `Search error: ${e.message}` }], isError: true };
     }
   },
 );
@@ -198,6 +269,29 @@ server.tool(
 );
 
 server.tool(
+  "append_memory",
+  "Append content to an existing prompt or memory. Creates a new version with the appended content added to the end. Use this for accumulating memories, adding context, or building up a prompt incrementally. The category 'memory' is recommended for user context that should be portable across AI tools.",
+  {
+    promptId: z.string().describe("The prompt ID to append to"),
+    content: z.string().describe("Content to append"),
+    separator: z.string().optional().describe("Separator between existing and new content (default: newline)"),
+  },
+  async ({ promptId, content, separator }) => {
+    try {
+      const result = await client.appendToPrompt(promptId, content, separator);
+      return {
+        content: [{
+          type: "text" as const,
+          text: `Appended to ${promptId} (v${result.versionNumber}, ${result.totalLength} chars total)`,
+        }],
+      };
+    } catch (e: any) {
+      return { content: [{ type: "text" as const, text: `Error: ${e.message}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
   "list_blueprints",
   "List all available agent blueprint templates. These are pre-built operating contracts for common agent types (code review, legal analysis, triage, etc.) that you can browse and use as starting points. Supports search by keyword or category.",
   {
@@ -240,6 +334,170 @@ server.tool(
       };
     } catch (e: any) {
       return { content: [{ type: "text" as const, text: `Error fetching blueprints: ${e.message}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  "save_brief",
+  "Create a Brief in Gildara and dispatch it to a named agent. " +
+    "Use this when the user has described a unit of work and wants an agent to execute it — " +
+    "phrases like 'send this to [agent]', 'have [agent] do this', 'dispatch this', " +
+    "'save a brief for [agent]', or 'queue this up for [agent]'. " +
+    "The Brief is created from the conversation content, dispatched immediately, " +
+    "and a Telegram ping is sent to the user's connected chat. The agent (running on the user's box) " +
+    "filters by assignee_agent_slug and processes only briefs addressed to it. " +
+    "Returns the brief_id and a deep link. Does NOT wait for the agent to execute — the result " +
+    "arrives asynchronously via the agent's own channels (or the user can check the deep link).\n\n" +
+    "Compose the body in the SECOND PERSON addressing the agent (e.g. 'You are running an FTO analysis on...'). " +
+    "Include everything the agent needs — it does NOT have access to this conversation. " +
+    "End with a clear statement of the expected output. " +
+    "Default classification is 'internal'; only set 'confidential' if the user explicitly flags it.\n\n" +
+    "Do NOT write return-result instructions in the body — Gildara automatically " +
+    "appends a 'Returning your result' footer with the exact POST endpoint, brief_id, " +
+    "required scope, and payload shape before the snapshot is frozen. Focus your body " +
+    "on the WORK; the system handles the return contract.",
+  {
+    title: z.string().describe("Short human-readable label, ≤200 chars. Example: 'FTO research: polymer substrate'."),
+    body: z.string().describe(
+      "The full rendered brief text the agent will execute against. This is the FROZEN snapshot — " +
+      "whatever you write here is what the agent sees verbatim. Markdown supported. ≤50,000 chars.",
+    ),
+    assignee_agent_slug: z.string().describe(
+      "Lowercase slug of the agent the user wants this dispatched to (e.g. 'gevorg', 'research-bot'). " +
+      "Ask the user if ambiguous.",
+    ),
+    classification: z.enum(["public", "internal", "confidential"]).optional().describe(
+      "Content sensitivity. Defaults to 'internal'. Escalate to 'confidential' only on explicit user signal.",
+    ),
+    notes_for_agent: z.string().optional().describe(
+      "Freeform out-of-band instructions to the agent (e.g. 'dry-run first', 'do not email the client yet'). Not part of the prompt body.",
+    ),
+    source_prompt_id: z.string().optional().describe(
+      "If the brief is derived from a saved Prompt, pass its ID for lineage. Omit for conversation-derived briefs.",
+    ),
+  },
+  async ({ title, body, assignee_agent_slug, classification, notes_for_agent, source_prompt_id }) => {
+    try {
+      const result = await client.saveBrief({
+        title,
+        body,
+        assigneeAgentSlug: assignee_agent_slug,
+        classification,
+        notesForAgent: notes_for_agent,
+        sourcePromptId: source_prompt_id,
+      });
+      const lines = [
+        `Brief dispatched: ${result.brief_id}`,
+        `Assignee: ${result.assignee_agent_slug}`,
+        `View: ${result.deep_link}`,
+      ];
+      if (result.telegram_ping.sent) {
+        lines.push(`Telegram ping sent — ${result.assignee_agent_slug}'s agent will pick this up.`);
+      } else {
+        const reason = result.telegram_ping.reason || 'unknown';
+        if (reason === 'no_telegram_chat_connected') {
+          lines.push(
+            `⚠️ Brief saved but no Telegram chat is connected — the agent won't be notified automatically. ` +
+            `Pair Telegram at ${baseUrl}/account, or open the deep link to retrieve manually.`,
+          );
+        } else {
+          lines.push(`⚠️ Telegram ping failed (${reason}). Brief saved; the agent can still GET it directly.`);
+        }
+      }
+      return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+    } catch (e: any) {
+      return { content: [{ type: "text" as const, text: `Error saving brief: ${e.message}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  "list_returned_briefs",
+  "List briefs that have results returned from their agents (status='returned'), " +
+    "most recent first. Use when the user asks 'what results are waiting for me?', " +
+    "'any agent responses?', 'show me completed briefs', 'what did my agents send back?'. " +
+    "Returns summaries (title, agent, returned time) — use get_brief_result(brief_id) " +
+    "to fetch the actual result text for a specific brief.",
+  {
+    limit: z.number().int().min(1).max(50).optional().describe("Max briefs to return (default 20, max 50)"),
+  },
+  async ({ limit }) => {
+    try {
+      const pageSize = Math.min(limit || 20, 50);
+      const res = await client.listBriefs({ status: 'returned', limit: pageSize });
+      const items = res.items || [];
+      if (items.length === 0) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: "No briefs with returned results. Agents that have completed assigned work will appear here; if you are expecting a response, check the brief's status (it may still be `dispatched` or `retrieved`).",
+          }],
+        };
+      }
+      const lines: string[] = [`${items.length} brief${items.length === 1 ? '' : 's'} with returned results:`, ''];
+      for (const b of items) {
+        const when = typeof b.result_submitted_at === 'string'
+          ? b.result_submitted_at.slice(0, 16).replace('T', ' ') + ' UTC'
+          : '?';
+        lines.push(`• ${b.title || '(untitled)'} — from @${b.assignee_agent_slug || 'unknown'} at ${when}`);
+        lines.push(`  ID: ${b.brief_id}`);
+      }
+      lines.push('');
+      lines.push('Use get_brief_result(brief_id) to read any of these in full.');
+      return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+    } catch (e: any) {
+      return { content: [{ type: "text" as const, text: `Error listing briefs: ${e.message}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  "get_brief_result",
+  "Fetch the result an agent submitted for a previously-dispatched Brief. " +
+    "Use when the user asks 'what did [agent] say about [brief]?', 'show me the result', " +
+    "'did gevorg respond yet?', or references a brief_id like 'brf_xxxxxxxx'. " +
+    "Typical flow: the user got a Telegram DM saying '📬 Gevorg returned a result for brf_xxx' and " +
+    "now wants to see the content. Returns null-equivalent text if the result hasn't arrived yet — " +
+    "that's a valid state, not an error.",
+  {
+    briefId: z.string().describe("Brief ID in format 'brf_xxxxxxxx' (8 hex chars). Ask the user if unclear."),
+  },
+  async ({ briefId }) => {
+    try {
+      const d = await client.getBrief(briefId);
+      const lines: string[] = [
+        `Brief: ${d.title}`,
+        `ID: ${d.brief_id}`,
+        `Assignee: ${d.assignee_agent_slug}`,
+        `Status: ${d.status}`,
+        '',
+      ];
+      if (d.result) {
+        lines.push('— Result —');
+        lines.push(d.result);
+        if (d.result_url) {
+          lines.push('');
+          lines.push(`Artifact URL: ${d.result_url}`);
+        }
+        if (d.result_submitted_at) {
+          lines.push('');
+          lines.push(`Submitted: ${d.result_submitted_at}`);
+        }
+      } else if (d.status === 'dispatched' || d.status === 'retrieved') {
+        lines.push(
+          `No result yet. The brief is in status '${d.status}' — the agent has ` +
+            `${d.status === 'retrieved' ? 'picked it up but not finished' : 'not picked it up yet'}. ` +
+            `Check again later. You'll get a Telegram DM when the agent submits a result.`,
+        );
+      } else if (d.status === 'blocked') {
+        lines.push("The agent marked this brief as blocked (couldn't complete the task). No result was submitted.");
+      } else {
+        lines.push(`Brief is in status '${d.status}'. No result text available.`);
+      }
+      return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+    } catch (e: any) {
+      return { content: [{ type: "text" as const, text: `Error fetching brief result: ${e.message}` }], isError: true };
     }
   },
 );

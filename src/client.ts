@@ -102,13 +102,45 @@ export interface RunResult {
   };
 }
 
+// Client version — kept in sync with package.json manually. The MCP server
+// runs as a bundled .js file at end-user install time, so we can't require()
+// package.json without it showing up in the dist output.
+const CLIENT_VERSION = "0.7.2";
+
 export class GildaraClient {
   private apiKey: string;
   private baseUrl: string;
+  private hasPinged = false;
 
   constructor(options: GildaraClientOptions) {
     this.apiKey = options.apiKey;
     this.baseUrl = (options.baseUrl || DEFAULT_BASE_URL).replace(/\/$/, "");
+  }
+
+  /**
+   * Fire-and-forget install telemetry ping. Runs once per client instance
+   * (i.e. once per MCP server process / session) after the first successful
+   * API call. Gives the server a real "daily active MCP clients" signal
+   * independent of npm download stats.
+   */
+  private sendHelloIfFirstSuccess(): void {
+    if (this.hasPinged) return;
+    this.hasPinged = true;
+
+    // Don't await; don't block the hot path.
+    fetch(`${this.baseUrl}/api/v1/hello`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        client: "@gildara/mcp-server",
+        version: CLIENT_VERSION,
+        platform: process.platform,
+        nodeVersion: process.version,
+      }),
+      signal: AbortSignal.timeout(3000),
+    }).catch(() => {
+      // Silent — telemetry failures must never affect user workflows.
+    });
   }
 
   private async request<T>(
@@ -121,7 +153,7 @@ export class GildaraClient {
     const headers: Record<string, string> = {
       "X-API-Key": this.apiKey,
       "Content-Type": "application/json",
-      "User-Agent": "gildara-mcp-server/0.2.2",
+      "User-Agent": "gildara-mcp-server/0.7.2",
     };
 
     try {
@@ -152,6 +184,9 @@ export class GildaraClient {
         writeCache(path, data);
       }
 
+      // First successful call per session — send install telemetry ping.
+      this.sendHelloIfFirstSuccess();
+
       return data as T;
     } catch (error) {
       // On network failure, try local cache for GET requests
@@ -169,6 +204,19 @@ export class GildaraClient {
   /** List all prompts in the user's vault. Cached locally for offline fallback. */
   async listPrompts(): Promise<Prompt[]> {
     const result = await this.request<{ items: Prompt[] }>("GET", "/prompts?limit=100", undefined, { cacheable: true });
+    return result.items || [];
+  }
+
+  /**
+   * Semantic search over the user's vault. Uses Gemini embeddings +
+   * Firestore vector similarity. Returns prompts ranked by relevance.
+   */
+  async searchPrompts(query: string, limit: number = 10): Promise<Array<Prompt & { distance?: number }>> {
+    const params = new URLSearchParams({ q: query, limit: String(limit) });
+    const result = await this.request<{ items: Array<Prompt & { distance?: number }>; query: string }>(
+      "GET",
+      `/prompts/search?${params.toString()}`,
+    );
     return result.items || [];
   }
 
@@ -221,6 +269,116 @@ export class GildaraClient {
     variables?: string[];
   }): Promise<{ promptId: string }> {
     return this.request<{ promptId: string }>("POST", "/prompts", data);
+  }
+
+  /** Append content to an existing prompt (creates a new version). */
+  async appendToPrompt(
+    promptId: string,
+    content: string,
+    separator?: string,
+  ): Promise<{ promptId: string; versionId: string; versionNumber: number; totalLength: number }> {
+    const body: Record<string, string> = { content };
+    if (separator) body.separator = separator;
+    return this.request<{ promptId: string; versionId: string; versionNumber: number; totalLength: number }>(
+      "POST",
+      `/prompts/${promptId}/append`,
+      body,
+    );
+  }
+
+  /**
+   * Create + dispatch a Brief in one call. The body is frozen verbatim
+   * as the agent's instruction packet — what the calling model produces
+   * here is what the agent sees. Returns immediately after dispatch; does
+   * NOT wait for the agent to acknowledge or execute.
+   */
+  async saveBrief(input: {
+    title: string;
+    body: string;
+    assigneeAgentSlug: string;
+    classification?: 'public' | 'internal' | 'confidential';
+    notesForAgent?: string;
+    sourcePromptId?: string;
+    variables?: Record<string, string>;
+  }): Promise<{
+    brief_id: string;
+    status: string;
+    assignee_agent_slug: string;
+    dispatch_channel: string;
+    deep_link: string;
+    dispatched_at: string;
+    telegram_ping: { sent: boolean; chatId?: string; reason?: string };
+  }> {
+    return this.request("POST", "/briefs", {
+      title: input.title,
+      body: input.body,
+      assignee_agent_slug: input.assigneeAgentSlug,
+      classification: input.classification,
+      notes_for_agent: input.notesForAgent,
+      source_prompt_id: input.sourcePromptId,
+      variables: input.variables,
+    });
+  }
+
+  /**
+   * Fetch a brief by ID, including the result (if the assigned agent has
+   * submitted one). For briefs still in 'dispatched' or 'retrieved' status,
+   * the `result` field is null — that's a normal pre-result state, not an
+   * error. The calling model should tell the user "no response yet."
+   */
+  async getBrief(briefId: string): Promise<{
+    brief_id: string;
+    owner_id: string;
+    title: string;
+    resolved_snapshot: string;
+    assignee_agent_slug: string;
+    classification: string;
+    notes_for_agent: string;
+    source_prompt_id: string | null;
+    variables: Record<string, string> | null;
+    status: string;
+    nonce: string;
+    dispatched_at: string;
+    retrieved_at: string | null;
+    result: string | null;
+    result_url: string | null;
+    result_submitted_at: string | null;
+  }> {
+    return this.request("GET", `/briefs/${briefId}`);
+  }
+
+  /**
+   * List the caller's briefs, filtered + paginated.
+   * Status filter supports a single value only (v0 — multi-status → multiple
+   * queries, can layer on later). Cursor is the `createdAt` ISO timestamp of
+   * the last item from the previous page.
+   */
+  async listBriefs(params: {
+    status?: 'draft' | 'dispatched' | 'retrieved' | 'returned' | 'blocked';
+    limit?: number;
+    cursor?: string;
+  }): Promise<{
+    items: Array<{
+      brief_id: string;
+      title: string;
+      assignee_agent_slug: string;
+      classification: string;
+      status: string;
+      source_prompt_id: string | null;
+      created_at: string | null;
+      dispatched_at: string | null;
+      retrieved_at: string | null;
+      result_submitted_at: string | null;
+    }>;
+    cursor: string | null;
+    hasMore: boolean;
+  }> {
+    const qs = new URLSearchParams();
+    if (params.status) qs.set('status', params.status);
+    if (params.limit) qs.set('limit', String(params.limit));
+    if (params.cursor) qs.set('cursor', params.cursor);
+    const suffix = qs.toString() ? `?${qs}` : '';
+    return this.request('GET', `/briefs${suffix}`);
   }
 
   /** Check API connectivity and key validity. */

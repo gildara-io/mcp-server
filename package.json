@@ -1,9 +1,17 @@
 {
   "name": "@gildara/mcp-server",
-  "version": "0.3.0",
+  "version": "0.7.6",
   "mcpName": "io.gildara/mcp-server",
-  "description": "MCP server for Gildara — bring your prompt vault into any AI tool",
+  "description": "MCP server for Gildara — operating contracts for AI agents. Structured runtime instructions compiled into optimal system prompts.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gildara-io/mcp-server.git"
+  },
+  "homepage": "https://gildara.io",
+  "bugs": {
+    "url": "https://github.com/gildara-io/mcp-server/issues"
+  },
   "type": "module",
   "main": "dist/index.js",
   "bin": {
@@ -12,7 +20,8 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "prepublishOnly": "tsc"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1"
@@ -23,7 +32,8 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "keywords": [
     "mcp",

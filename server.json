@@ -1,34 +1,25 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.gildara/mcp-server",
-  "description": "Connect AI tools to your Gildara prompt vault with operating contracts and auto-repair.",
+  "description": "Operating contracts for AI agents. Structured instructions compiled into system prompts.",
+  "version": "0.7.6",
   "repository": {
     "url": "https://github.com/gildara-io/mcp-server",
     "source": "github"
   },
-  "version": "0.2.2",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@gildara/mcp-server",
-      "version": "0.2.2",
+      "version": "0.7.6",
       "transport": {
         "type": "stdio"
       },
       "environmentVariables": [
         {
-          "description": "Your Gildara API key (pvk_...). Get one instantly: POST https://gildara.io/api/v1/provision with {\"agent_label\":\"my-agent\"}. No signup needed.",
-          "isRequired": true,
-          "format": "string",
-          "isSecret": true,
-          "name": "GILDARA_API_KEY"
-        },
-        {
-          "description": "Override API base URL (default: https://gildara.io)",
-          "isRequired": false,
-          "format": "string",
-          "isSecret": false,
-          "name": "GILDARA_BASE_URL"
+          "name": "GILDARA_API_KEY",
+          "description": "Your API key (pvk_...). If unset, auto-provisions a free agent account on first run.",
+          "required": false
         }
       ]
     }

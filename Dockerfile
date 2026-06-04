@@ -26,8 +26,8 @@ ENV NODE_ENV=production
 ENTRYPOINT ["node", "dist/index.js"]
 
 LABEL org.opencontainers.image.title="Gildara MCP Server"
-LABEL org.opencontainers.image.description="Connect AI tools to your Gildara prompt vault"
+LABEL org.opencontainers.image.description="Operating contracts for AI agents — structured runtime instructions compiled into optimal system prompts"
 LABEL org.opencontainers.image.url="https://gildara.io"
-LABEL org.opencontainers.image.source="https://github.com/gildara/mcp-server"
+LABEL org.opencontainers.image.source="https://github.com/gildara-io/mcp-server"
 LABEL org.opencontainers.image.vendor="Gildara"
 LABEL org.opencontainers.image.licenses="MIT"
