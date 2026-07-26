@@ -24,6 +24,10 @@ export interface AutoKeyRecord {
   apiKey: string;
   userId?: string;
   linkCode?: string;
+  /** Full pairing URL (https://gildara.io/link?code=…) from the provision response. */
+  linkUrl?: string;
+  /** Set once we observe the key linked to a human account — suppresses the link nudge. */
+  linkedAt?: string;
   agentLabel?: string;
   createdAt: string;
   /** Which fallback tier produced this key. */
@@ -82,17 +86,23 @@ async function provisionNewAccount(baseUrl: string): Promise<AutoKeyRecord> {
       `Auto-provision failed (${res.status}): ${text.slice(0, 300)}`,
     );
   }
-  const data = await res.json();
+  const json = await res.json();
+  // The provision endpoint wraps its payload in `{ data: … }` like every
+  // /api/v1/* route; older deployments returned the object bare. Accept both
+  // — reading only the top level here is why early auto-provisions never
+  // captured the link code.
+  const data = json?.data ?? json;
   const apiKey = data.api_key || data.apiKey;
   if (typeof apiKey !== "string" || !apiKey.startsWith("pvk_")) {
     throw new Error(
-      `Auto-provision returned unexpected payload (no pvk_ key): ${JSON.stringify(data).slice(0, 200)}`,
+      `Auto-provision returned unexpected payload (no pvk_ key): ${JSON.stringify(json).slice(0, 200)}`,
     );
   }
   return {
     apiKey,
-    userId: data.user_id || data.userId,
-    linkCode: data.link_code || data.linkCode,
+    userId: data.account_id || data.accountId || data.user_id || data.userId,
+    linkCode: data.link?.code || data.link_code || data.linkCode,
+    linkUrl: data.link?.url,
     agentLabel: "auto-provisioned-mcp",
     createdAt: new Date().toISOString(),
     source: "provisioned",
@@ -131,6 +141,17 @@ export async function loadOrProvisionKey(
   const record = await provisionNewAccount(baseUrl);
   writeAutoKeyFile(record);
   return record;
+}
+
+/**
+ * Persist the linked state to the cached key file so future sessions skip the
+ * link nudge without a network call. No-op for env-provided keys (nothing on
+ * disk to update) or when the file has been removed.
+ */
+export function markKeyLinked(): void {
+  const cached = readAutoKeyFile();
+  if (!cached || cached.linkedAt) return;
+  writeAutoKeyFile({ ...cached, linkedAt: new Date().toISOString() });
 }
 
 export { AUTO_KEY_FILE };

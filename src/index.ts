@@ -31,7 +31,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { GildaraClient } from "./client.js";
-import { loadOrProvisionKey, AUTO_KEY_FILE } from "./autoProvision.js";
+import { loadOrProvisionKey, markKeyLinked, AUTO_KEY_FILE } from "./autoProvision.js";
+import { applyAccountLinkNudge, type ToolResult } from "./linkNudge.js";
 
 // ── Initialize ───────────────────────────────────────────────────
 
@@ -56,6 +57,12 @@ const apiKey = keyRecord.apiKey;
 // Surface first-run provisioning prominently so the user can pair the
 // agent to their human account. Goes to stderr — stdout is the MCP
 // protocol stream and must stay clean.
+// The pairing URL for linking this agent to a human account. Prefer the URL
+// the provision response handed us; fall back to building it from the code
+// (covers cached key files written before linkUrl was persisted).
+const linkUrl = keyRecord.linkUrl
+  || (keyRecord.linkCode ? `${baseUrl}/link?code=${keyRecord.linkCode}` : undefined);
+
 if (keyRecord.source === "provisioned") {
   console.error(
     `[Gildara] Auto-provisioned a new agent account on first run.\n` +
@@ -63,7 +70,7 @@ if (keyRecord.source === "provisioned") {
     `  Key prefix: ${apiKey.slice(0, 8)}...\n` +
     (keyRecord.linkCode
       ? `  Link code: ${keyRecord.linkCode}\n` +
-        `  Pair this agent with your account at: ${baseUrl.replace(/\/api\/?$/, "")}/link?code=${keyRecord.linkCode}\n`
+        `  Pair this agent with your account at: ${linkUrl}\n`
       : "") +
     `  Tier: free (10 prompts, 20 API calls/day). Upgrade: ${baseUrl}/pricing`,
   );
@@ -78,8 +85,65 @@ const client = new GildaraClient({
 
 const server = new McpServer({
   name: "gildara",
-  version: "0.7.2",
+  version: "0.8.0",
 });
+
+// ── Account-link nudge ───────────────────────────────────────────
+//
+// An auto-provisioned key works fully unlinked, so nothing ever drove users
+// to pair the agent with their human account: the link code only went to
+// stderr, which Claude Desktop / Cursor hide (verified 2026-06-04 — every
+// auto-provisioned key had lastUsedAt: null and zero linked humans). Surface
+// linking where users actually look — tool responses:
+//
+//   1. The `get_account_link` tool returns the pairing code + URL on demand.
+//   2. When the key is unlinked, a one-line notice is appended to the FIRST
+//      tool response of the session. Never stderr, never repeated.
+
+let linkNudgeArmed = keyRecord.source !== "env" && !!linkUrl && !keyRecord.linkedAt;
+
+// Best-effort startup check: if the key was linked from another session or
+// device, disarm the nudge and persist that so future sessions skip the call.
+// Fail-open on the missing-field case — only an explicit `linked: false`
+// (what /fleet returns for an unlinked agent) keeps the nudge armed.
+if (linkNudgeArmed) {
+  void (async () => {
+    try {
+      const fleet = await client.getFleetStatus();
+      if (fleet.linked !== false) {
+        linkNudgeArmed = false;
+        markKeyLinked();
+      }
+    } catch {
+      /* offline or rate-limited — keep the nudge armed */
+    }
+  })();
+}
+
+// Install the nudge policy before tools are registered. The policy uses an
+// explicit display-only allowlist: machine-consumable responses such as
+// resolve_prompt must remain byte-for-byte unchanged. get_account_link consumes
+// the reminder without duplicating the information it already returns.
+const registerTool = server.tool.bind(server);
+(server as unknown as { tool: (...args: unknown[]) => unknown }).tool = (
+  ...args: unknown[]
+) => {
+  const name = args[0] as string;
+  const handler = args[args.length - 1] as (...hArgs: unknown[]) => Promise<ToolResult>;
+  args[args.length - 1] = async (...hArgs: unknown[]) => {
+    const result = await handler(...hArgs);
+    if (!linkNudgeArmed || !result) {
+      return result;
+    }
+
+    const outcome = applyAccountLinkNudge(name, result);
+    if (outcome.consumed) {
+      linkNudgeArmed = false;
+    }
+    return outcome.result;
+  };
+  return (registerTool as (...a: unknown[]) => unknown)(...args);
+};
 
 // ── Tools ────────────────────────────────────────────────────────
 
@@ -119,7 +183,7 @@ server.tool(
   },
   async ({ query, limit }) => {
     try {
-      const results = await client.searchPrompts(query, limit || 10);
+      const { items: results, mode } = await client.searchPrompts(query, limit || 10);
       if (results.length === 0) {
         return {
           content: [{
@@ -133,10 +197,17 @@ server.tool(
         const contract = p.operatingContract?.enabled ? " ⚡contract" : "";
         return `${i + 1}. ${p.promptId} — ${p.title} [${p.category}]${contract}${score}`;
       });
+      // Say so when the server fell back to keyword matching. Presenting
+      // substring hits as if they were ranked by meaning would have the
+      // calling model over-trust them — and quietly conclude the vault has
+      // nothing relevant when semantic ranking is simply unavailable.
+      const header = mode === "keyword"
+        ? `Top ${results.length} prompts matching "${query}" (keyword matching — semantic ranking is temporarily unavailable, so these are substring matches rather than closest-by-meaning):`
+        : `Top ${results.length} prompts matching "${query}":`;
       return {
         content: [{
           type: "text" as const,
-          text: `Top ${results.length} prompts matching "${query}":\n\n${lines.join("\n")}\n\nUse get_prompt <id> or resolve_prompt <id> to fetch details.`,
+          text: `${header}\n\n${lines.join("\n")}\n\nUse get_prompt <id> or resolve_prompt <id> to fetch details.`,
         }],
       };
     } catch (e: any) {
@@ -499,6 +570,64 @@ server.tool(
     } catch (e: any) {
       return { content: [{ type: "text" as const, text: `Error fetching brief result: ${e.message}` }], isError: true };
     }
+  },
+);
+
+// stdio-only tool — N/A on the HTTP MCP server (app/api/mcp/[transport]/
+// route.ts): that surface authenticates via OAuth against an existing human
+// account, so there is no local auto-provisioned key to link. See
+// docs/MCP_INTEGRATION_CONTRACT.md for the parity exception convention.
+server.tool(
+  "get_account_link",
+  "Get the URL to link this agent's vault to a human Gildara account (unlocks sync across devices and the web UI at gildara.io). Returns the pairing code and link URL — show both to the user so they can open the URL in a browser. Use this when the user asks how to log in, pair, claim, or link this agent, or right after first-run auto-provisioning.",
+  {},
+  async () => {
+    // Live check first — the local record can be stale (the user may have
+    // linked from the web UI or another device).
+    let linkedNow: boolean | undefined;
+    try {
+      linkedNow = (await client.getFleetStatus()).linked !== false;
+    } catch {
+      /* offline — answer from local state below */
+    }
+
+    if (linkedNow) {
+      linkNudgeArmed = false;
+      markKeyLinked();
+      return {
+        content: [{
+          type: "text" as const,
+          text: `This vault is already linked to a human Gildara account. Manage it at ${baseUrl}/account.`,
+        }],
+      };
+    }
+
+    if (linkUrl) {
+      return {
+        content: [{
+          type: "text" as const,
+          text: [
+            "This vault is not linked to a human account yet. To link it, open:",
+            "",
+            `  ${linkUrl}`,
+            ...(keyRecord.linkCode ? ["", `  (pairing code: ${keyRecord.linkCode})`] : []),
+            "",
+            "Linking pairs this agent with your Gildara account — you get the web UI, sync across devices, and shared tier limits. If the code has expired, sign in at " +
+              `${baseUrl}/account to re-link from there.`,
+          ].join("\n"),
+        }],
+      };
+    }
+
+    return {
+      content: [{
+        type: "text" as const,
+        text:
+          "This server is using a manually provided API key (GILDARA_API_KEY), so there is no pending pairing code. " +
+          `If the key came from your own account it is already linked — manage it at ${baseUrl}/account. ` +
+          `If it was provisioned via the API, use the link code from that provision response at ${baseUrl}/link.`,
+      }],
+    };
   },
 );
 
