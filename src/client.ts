@@ -105,7 +105,7 @@ export interface RunResult {
 // Client version — kept in sync with package.json manually. The MCP server
 // runs as a bundled .js file at end-user install time, so we can't require()
 // package.json without it showing up in the dist output.
-const CLIENT_VERSION = "0.7.2";
+const CLIENT_VERSION = "0.8.0";
 
 export class GildaraClient {
   private apiKey: string;
@@ -153,7 +153,7 @@ export class GildaraClient {
     const headers: Record<string, string> = {
       "X-API-Key": this.apiKey,
       "Content-Type": "application/json",
-      "User-Agent": "gildara-mcp-server/0.7.2",
+      "User-Agent": "gildara-mcp-server/0.8.0",
     };
 
     try {
@@ -211,13 +211,19 @@ export class GildaraClient {
    * Semantic search over the user's vault. Uses Gemini embeddings +
    * Firestore vector similarity. Returns prompts ranked by relevance.
    */
-  async searchPrompts(query: string, limit: number = 10): Promise<Array<Prompt & { distance?: number }>> {
+  async searchPrompts(
+    query: string,
+    limit: number = 10,
+  ): Promise<{ items: Array<Prompt & { distance?: number }>; mode: "semantic" | "keyword" }> {
     const params = new URLSearchParams({ q: query, limit: String(limit) });
-    const result = await this.request<{ items: Array<Prompt & { distance?: number }>; query: string }>(
-      "GET",
-      `/prompts/search?${params.toString()}`,
-    );
-    return result.items || [];
+    const result = await this.request<{
+      items: Array<Prompt & { distance?: number }>;
+      query: string;
+      mode?: "semantic" | "keyword";
+    }>("GET", `/prompts/search?${params.toString()}`);
+    // `mode` is absent on deployments predating the keyword fallback; those
+    // only ever served semantic results, so that is the safe assumption.
+    return { items: result.items || [], mode: result.mode === "keyword" ? "keyword" : "semantic" };
   }
 
   /** Get a single prompt by ID. Cached locally for offline fallback. */
@@ -379,6 +385,15 @@ export class GildaraClient {
     if (params.cursor) qs.set('cursor', params.cursor);
     const suffix = qs.toString() ? `?${qs}` : '';
     return this.request('GET', `/briefs${suffix}`);
+  }
+
+  /**
+   * Whether this key's agent account is linked to a human Gildara account.
+   * GET /fleet returns `linked: false` for an unlinked agent and the owner's
+   * fleet (with `linked: true`) once paired.
+   */
+  async getFleetStatus(): Promise<{ linked?: boolean; message?: string }> {
+    return this.request("GET", "/fleet");
   }
 
   /** Check API connectivity and key validity. */

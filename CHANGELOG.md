@@ -4,6 +4,18 @@ All notable changes to `@gildara/mcp-server` are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## 0.8.0 — 2026-07-21
+
+### Added
+
+- **`get_account_link` tool** — returns the pairing code and `https://gildara.io/link?code=…` URL for linking this agent's vault to a human Gildara account. Previously the link code was printed only to stderr, which Claude Desktop / Cursor hide — the root cause of near-zero account linking (verified 2026-06-04: every auto-provisioned key had `lastUsedAt: null`). Tool responses are the channel users actually see. Checks live linked status first and answers accordingly, including for manually provided (`GILDARA_API_KEY`) keys. stdio-only: N/A on the HTTP MCP server, which authenticates via OAuth against an already-linked human account.
+- **One-time link nudge.** When the server starts with an unlinked auto-provisioned key, a one-line notice pointing at `get_account_link` is appended to the first display-only discovery response (`list_prompts`, `search_prompts`, or `list_blueprints`) — never to stderr, never repeated. A best-effort startup check against `GET /api/v1/fleet` disarms the nudge (and remembers it in `~/.gildara/auto-key.json` as `linkedAt`) once the key is linked.
+
+### Fixed
+
+- **Auto-provision response parsing.** `POST /api/v1/provision` wraps its payload in `{ data: … }` (like every `/api/v1/*` route) with the pairing info nested at `data.link.{code,url}`, but the client read `api_key`/`link_code` at the top level — so first-run provisioning failed against current deployments and the link code was never captured or persisted. Both envelope shapes are now accepted, and the link URL is persisted to `~/.gildara/auto-key.json` alongside the code.
+- **Machine-consumable tool response integrity.** The account-link nudge no longer mutates arbitrary successful tool responses. In particular, `resolve_prompt` now remains byte-for-byte unchanged so callers can safely pass its output verbatim to a model.
+
 ## 0.7.6 — 2026-06-04
 
 ### Fixed
@@ -71,8 +83,8 @@ First npm release since 0.6.0. Consolidates a documentation refresh and a new
 
 - `save_brief` requires Gildara backend at v0.5+ (`POST /api/v1/briefs` endpoint and `briefs` / `agents` Firestore collections must be deployed on the target `GILDARA_BASE_URL`). Against older backends the tool returns a structured error.
 - End-user prereqs for `save_brief`: one row in the `agents/` Firestore collection with `{ slug, telegramBotHandle }`, and a Telegram chat paired to the user's account via `/connect` in the bot DM.
-- Stdio and HTTP MCP surfaces both ship `save_brief` at identical tool name and schema, per the MCP parity contract at [`docs/MCP_INTEGRATION_CONTRACT.md`](https://gildara.io).
-- Agent-side integration recipe: [`docs/briefs/dogfood-rollout-v0.md`](https://gildara.io).
+- Stdio and HTTP MCP surfaces both ship `save_brief` at identical tool name and schema, per the MCP parity contract at [`docs/MCP_INTEGRATION_CONTRACT.md`](https://github.com/anaranillc/promptvault-ai-complete/blob/master/docs/MCP_INTEGRATION_CONTRACT.md).
+- Agent-side integration recipe: [`docs/briefs/dogfood-rollout-v0.md`](https://github.com/anaranillc/promptvault-ai-complete/blob/master/docs/briefs/dogfood-rollout-v0.md).
 - Version `0.6.1` appears in git history as a documentation-refresh prep step but was never published to npm — those changes are folded into this release.
 
 ## 0.6.0 — 2026-04
@@ -87,4 +99,4 @@ First npm release since 0.6.0. Consolidates a documentation refresh and a new
 ### Changed
 - `get_prompt` response now includes operating-contract summary fields.
 
-See [GitHub releases](https://github.com/gildara-io/mcp-server/releases) for prior history.
+See [GitHub releases](https://github.com/anaranillc/promptvault-ai-complete/releases) for prior history.

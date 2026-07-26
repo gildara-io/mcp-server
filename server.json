@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.gildara/mcp-server",
   "description": "Operating contracts for AI agents. Structured instructions compiled into system prompts.",
-  "version": "0.7.6",
+  "version": "0.8.0",
   "repository": {
     "url": "https://github.com/gildara-io/mcp-server",
     "source": "github"
@@ -11,7 +11,7 @@
     {
       "registryType": "npm",
       "identifier": "@gildara/mcp-server",
-      "version": "0.7.6",
+      "version": "0.8.0",
       "transport": {
         "type": "stdio"
       },

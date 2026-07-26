@@ -8,7 +8,7 @@
 
 Paste into `claude_desktop_config.json`, restart Claude — your Gildara tools appear in Claude's tool list. **No signup. No API key.** The server auto-provisions a free agent on first run and prints a one-click link code to pair it with your account later.
 
-![Gildara's tools surfaced in Claude](https://raw.githubusercontent.com/gildara-io/mcp-server/main/docs/images/4-17-26-mcp-tools-in-claude.png)
+![Gildara's tools surfaced in Claude](https://raw.githubusercontent.com/anaranillc/promptvault-ai-complete/master/docs/images/4-17-26-mcp-tools-in-claude.png)
 
 ### → [Get started at gildara.io](https://gildara.io) — pair your auto-provisioned agent to sync your vault and unlock Pro.
 
@@ -19,7 +19,7 @@ Paste into `claude_desktop_config.json`, restart Claude — your Gildara tools a
 - **Search prompts semantically** — find by meaning, not just keywords (Gemini embeddings).
 - **Resolve + run prompts** — compiled system prompts with operating-contract sections assembled, auto-repair on JSON schema failures.
 - **Create + append** — save new prompts, or append persistent facts to memory-type prompts.
-- **Dispatch briefs to agents** — say *"send this to gevorg"* and the MCP server creates a Brief, ships it as a `.md` attachment to your paired Telegram chat, and @mentions the target agent's bot. One call closes the sketch-in-chat → agent-on-another-box → result-in-chat loop. See [docs/briefs/dogfood-rollout-v0.md](https://gildara.io) for the agent-side integration recipe.
+- **Dispatch briefs to agents** — say *"send this to gevorg"* and the MCP server creates a Brief, ships it as a `.md` attachment to your paired Telegram chat, and @mentions the target agent's bot. One call closes the sketch-in-chat → agent-on-another-box → result-in-chat loop. See [docs/briefs/dogfood-rollout-v0.md](https://github.com/anaranillc/promptvault-ai-complete/blob/master/docs/briefs/dogfood-rollout-v0.md) for the agent-side integration recipe.
 - **Browse 48+ blueprints** — pre-built agent templates.
 
 ## Setup
@@ -79,14 +79,18 @@ Or, with an existing key:
 
 ### 3. Add to Cursor
 
-Edit `.cursor/mcp.json` in your project root using the same configuration as Claude Desktop (with or without the `env` block — same rules apply).
+One click:
+
+[![Install MCP Server](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/install-mcp?name=gildara&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsIkBnaWxkYXJhL21jcC1zZXJ2ZXIiXX0%3D)
+
+Or manually: edit `.cursor/mcp.json` in your project root using the same configuration as Claude Desktop (with or without the `env` block — same rules apply).
 
 ### 4. Add to Claude Code
 
-Run:
+Run this in your terminal:
 
 ```bash
-/mcp add gildara -- npx -y @gildara/mcp-server
+claude mcp add gildara -- npx -y @gildara/mcp-server
 ```
 
 Auto-provision works here too. Set `GILDARA_API_KEY` in your environment only if you want to use an existing key.
@@ -114,6 +118,7 @@ Gildara supports **Remote MCP** via HTTP/SSE.
 | `append_memory` | Add info to an existing memory-type prompt |
 | `save_brief` | Dispatch a brief to a named agent (MD attachment via Telegram, @mention routes to the right bot) |
 | `list_blueprints` | Browse 48+ agent blueprint templates |
+| `get_account_link` | Get the URL to link this agent's vault to a human Gildara account |
 
 ## Example usage
 

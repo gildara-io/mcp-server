@@ -1,6 +1,6 @@
 {
   "name": "@gildara/mcp-server",
-  "version": "0.7.6",
+  "version": "0.8.0",
   "mcpName": "io.gildara/mcp-server",
   "description": "MCP server for Gildara — operating contracts for AI agents. Structured runtime instructions compiled into optimal system prompts.",
   "license": "MIT",
@@ -21,10 +21,11 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "start": "node dist/index.js",
+    "test": "npm run build && node --test test/*.test.mjs",
     "prepublishOnly": "tsc"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.1"
+    "@modelcontextprotocol/sdk": "^1.29.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
