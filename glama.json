@@ -3,6 +3,6 @@
   "name": "Gildara",
   "description": "Operating contracts for AI agents. Structured runtime instructions compiled into optimal system prompts at resolve time. Auto-provisions on first run.",
   "maintainers": [
-    "gildara-io"
+    "anaranillc"
   ]
 }
