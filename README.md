@@ -1,5 +1,7 @@
 # Gildara MCP
 
+[![smithery badge](https://smithery.ai/badge/gildara-io/mcp-server)](https://smithery.ai/servers/gildara-io/mcp-server)
+
 **One prompt vault. Every agent. Zero setup.** Give Claude, Cursor, Windsurf, and Claude Code a shared, searchable prompt library that survives across chats, machines, and tools.
 
 ```json
